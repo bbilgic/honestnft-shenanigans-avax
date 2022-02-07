@@ -6,6 +6,7 @@ import requests
 from multicall import Call, Multicall
 from web3 import Web3
 from web3.exceptions import ContractLogicError
+from web3.middleware import geth_poa_middleware
 
 import utils.config as config
 import utils.ipfs as ipfs
@@ -18,6 +19,9 @@ def get_contract_abi(address, blockchain="ethereum"):
     elif blockchain == "polygon":
         abi_endpoint = config.POLYGON_ABI_ENDPOINT
         endpoint = config.POLYGON_ENDPOINT
+    elif blockchain == "avax":
+        abi_endpoint = config.AVAX_ABI_ENDPOINT
+        endpoint = config.AVAX_ENDPOINT
     else:
         raise ValueError(f"Blockchain {blockchain} not supported")
 
@@ -50,8 +54,9 @@ def get_contract_abi(address, blockchain="ethereum"):
             ]
 
             w3 = Web3(Web3.HTTPProvider(endpoint))
+            w3.middleware_onion.inject(geth_poa_middleware, layer=0)
             contract = w3.eth.contract(Web3.toChecksumAddress(address), abi=erc165_abi)
-
+            
             # Array of contract methods that were verified via ERC165
             contract_abi = []
 
@@ -118,6 +123,8 @@ def get_contract(address, abi, blockchain="ethereum"):
         endpoint = config.ENDPOINT
     elif blockchain == "polygon":
         endpoint = config.POLYGON_ENDPOINT
+    elif blockchain == "avax":
+        endpoint = config.AVAX_ENDPOINT
     else:
         raise ValueError(f"Blockchain {blockchain} not supported")
 
@@ -130,6 +137,7 @@ def get_contract(address, abi, blockchain="ethereum"):
         sys.exit()
 
     w3 = Web3(Web3.HTTPProvider(endpoint))
+    w3.middleware_onion.inject(geth_poa_middleware, layer=0)
 
     # Check if abi contains the tokenURI function
     contract_functions = [func["name"] for func in abi if "name" in func]
@@ -198,6 +206,8 @@ def get_token_uri_from_contract_batch(
     elif blockchain == "polygon":
         endpoint = config.POLYGON_ENDPOINT
         raise NotImplementedError("Polygon blockchain not supported yet")
+    elif blockchain == "avax":
+        endpoint = config.AVAX_ENDPOINT
     else:
         raise ValueError(f"Blockchain {blockchain} not supported")
 
@@ -208,9 +218,10 @@ def get_token_uri_from_contract_batch(
             )
             sys.exit()
 
-        # signature = get_function_signature(uri_func, abi)
+        #function_signature = get_function_signature(uri_func, abi)
 
         w3 = Web3(Web3.HTTPProvider(endpoint))
+        w3.middleware_onion.inject(geth_poa_middleware, layer=0)
 
         calls = []
         for token_id in token_ids:

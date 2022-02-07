@@ -15,6 +15,9 @@ from utils import chain
 from utils import config
 from utils import ipfs
 
+import threading
+import concurrent.futures
+concurrent_active = True
 
 """
 Metadata helper methods
@@ -32,8 +35,9 @@ def get_metadata(uri, destination):
             raise Exception(f"Failed to decode on-chain metadata: {uri}")
     else:
         # Fetch metadata from server
-        uri_response = requests.request("GET", uri, timeout=10)
+        uri_response = None
         try:
+            uri_response = requests.get(uri, timeout=30)
             response_json = uri_response.json()
         except Exception as err:
             print(err)
@@ -62,7 +66,9 @@ def fetch_all_metadata(
 ):
 
     # Create raw attribute folder for collection if it doesnt already exist
-    folder = f"{config.ATTRIBUTES_FOLDER}/{collection}/"
+    current = os.path.abspath(os.getcwd())
+    folder = f"{config.ATTRIBUTES_FOLDER}\\{collection}"
+    
     if not os.path.exists(folder):
         os.mkdir(folder)
 
@@ -122,9 +128,11 @@ def fetch_all_metadata(
         while retries < max_retries:
             try:
                 # Try to get metadata file from server
+                #threading.Thread(target=get_metadata,args=(metadata_uri,filename)).start()
                 get_metadata(uri=metadata_uri, destination=filename)
                 time.sleep(sleep)
                 break
+                
             except Exception as err:
                 # Handle throttling, pause and then try again up to max_retries number of times
                 print(
@@ -135,7 +143,7 @@ def fetch_all_metadata(
                 retries += 1
 
                 # Sleep for successively longer periods of time before restarting
-                time.sleep(sleep * retries)
+                #time.sleep(sleep * retries)
 
                 # Throw an error when max retries is exceeded
                 if retries >= max_retries:
@@ -149,35 +157,64 @@ def fetch_all_metadata(
         and uri_func is not None
         and contract is not None
         and abi is not None
-    ):
-        try:
-            function_signature = chain.get_function_signature(uri_func, abi)
-            # Fetch token URI from on-chain
+    ):  
+
+        function_signature = chain.get_function_signature(uri_func, abi)
+
+        if concurrent_active:
+            CONNECTIONS = 50
             BATCH_SIZE = 50
-            for i in range(0, len(token_ids), BATCH_SIZE):
-                print(f"Fetching [{i}, {i + BATCH_SIZE}]")
-                token_ids_batch = token_ids[i : i + BATCH_SIZE]
-                # Skip on-chain fetch if we already have the metadata
-                token_ids_batch = list(
-                    filter(
-                        lambda token_id: not os.path.exists(
-                            f"{folder}/{token_id}.json"
-                        ),
-                        token_ids_batch,
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=CONNECTIONS) as executor:
+                
+                for i in range(0, len(token_ids), BATCH_SIZE):
+                    print(f"Fetching [{i}, {i + BATCH_SIZE}]")
+                    token_ids_batch = token_ids[i : i + BATCH_SIZE]
+                    # Skip on-chain fetch if we already have the metadata
+                    token_ids_batch = list(
+                        filter(
+                            lambda token_id: not os.path.exists(
+                                f"{folder}/{token_id}.json"
+                            ),
+                            token_ids_batch,
+                        )
                     )
-                )
-                for token_id, metadata_uri in chain.get_token_uri_from_contract_batch(
-                    contract, token_ids_batch, uri_func, abi, blockchain=blockchain
-                ).items():
-                    fetch(
-                        token_id,
-                        metadata_uri,
-                        filename="{folder}{token_id}{file_extension}".format(
-                            folder=folder, token_id=token_id, file_extension=file_suffix
-                        ),
+                    for token_id, metadata_uri in chain.get_token_uri_from_contract_batch(
+                        contract, token_ids_batch, uri_func, abi, blockchain=blockchain
+                    ).items():
+                        executor.submit(fetch, token_id, metadata_uri,filename="{folder}{token_id}{file_extension}".format(
+                                folder=folder, token_id=token_id, file_extension=file_suffix))
+
+        else:
+            try:
+                #function_signature = chain.get_function_signature(uri_func, abi)
+                # Fetch token URI from on-chain
+                BATCH_SIZE = 50
+                
+                for i in range(0, len(token_ids), BATCH_SIZE):
+                    print(f"Fetching [{i}, {i + BATCH_SIZE}]")
+                    token_ids_batch = token_ids[i : i + BATCH_SIZE]
+                    # Skip on-chain fetch if we already have the metadata
+                    token_ids_batch = list(
+                        filter(
+                            lambda token_id: not os.path.exists(
+                                f"{folder}/{token_id}.json"
+                            ),
+                            token_ids_batch,
+                        )
                     )
-        except Exception as err:
-            print(err)
+                    for token_id, metadata_uri in chain.get_token_uri_from_contract_batch(
+                        contract, token_ids_batch, uri_func, abi, blockchain=blockchain
+                    ).items():
+                        fetch(
+                            token_id,
+                            metadata_uri,
+                            filename="{folder}{token_id}{file_extension}".format(
+                                folder=folder, token_id=token_id, file_extension=file_suffix
+                            ),
+                        )
+            except Exception as err:
+                print(err)
 
     # Fetch metadata for all token ids
     for token_id in token_ids:
@@ -477,7 +514,7 @@ if __name__ == "__main__":
     ARG_PARSER.add_argument(
         "-blockchain",
         type=str,
-        choices=["ethereum", "polygon"],
+        choices=["ethereum", "polygon","avax"],
         default="ethereum",
         help="Blockchain where the contract is located. (default: ethereum)",
     )
@@ -488,6 +525,9 @@ if __name__ == "__main__":
     if ARGS.blockchain == "polygon":
         if ARGS.web3_provider is not None:
             config.POLYGON_ENDPOINT = ARGS.web3_provider
+    if ARGS.blockchain == "avax":
+        if ARGS.web3_provider is not None:
+            config.AVAX_ENDPOINT = ARGS.web3_provider
     else:
         if ARGS.web3_provider is not None:
             config.ENDPOINT = ARGS.web3_provider
